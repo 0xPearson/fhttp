@@ -26,7 +26,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	tls "github.com/0xPearson/utls"
 	"io"
 	"log"
 	"net"
@@ -35,6 +34,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	tls "github.com/0xPearson/utls"
 
 	"github.com/0xPearson/fhttp/http2"
 	"github.com/0xPearson/fhttp/http2/hpack"
