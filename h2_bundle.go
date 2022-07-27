@@ -8381,12 +8381,6 @@ func (cc *http2ClientConn) encodeHeaders(req *Request, addGzipHeader bool, trail
 		// [RFC3986]).
 
 		pHeaderOrder, ok := req.Header[PHeaderOrderKey]
-
-		if !ok {
-			pHeaderOrder = cc.t.t1.PseudoHeaderOrder
-			ok = true
-		}
-
 		m := req.Method
 		if m == "" {
 			m = MethodGet
@@ -8982,8 +8976,6 @@ func (rl *http2clientConnReadLoop) handleResponse(cs *http2clientStream, f *http
 	cs.bytesRemain = res.ContentLength
 	res.Body = http2transportResponseBody{cs}
 	go cs.awaitRequestCancel(cs.req)
-
-	res.Body = DecompressBody(res)
 
 	return res, nil
 }

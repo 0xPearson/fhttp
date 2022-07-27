@@ -97,7 +97,7 @@ type Transport struct {
 	// want to advertise an unlimited value to the peer, Transport
 	// interprets the highest possible value here (0xffffffff or 1<<32-1)
 	// to mean no limit.
-	// MaxHeaderListSize uint32
+	MaxHeaderListSize uint32
 
 	// StrictMaxConcurrentStreams controls whether the server's
 	// SETTINGS_MAX_CONCURRENT_STREAMS should be respected
@@ -145,36 +145,19 @@ type Transport struct {
 	connPoolOrDef ClientConnPool // non-nil version of ConnPool
 
 	// Settings should not include InitialWindowSize or HeaderTableSize, set that in Transport
-	Settings          map[SettingID]uint32
-	SettingsOrder     []SettingID
-	Priorities        []Priority
-	PseudoHeaderOrder []string
-	ConnectionFlow    uint32
-
-	// Settings          []Setting
+	Settings          []Setting
 	InitialWindowSize uint32 // if nil, will use global initialWindowSize
 	HeaderTableSize   uint32 // if nil, will use global initialHeaderTableSize
 }
 
-type Priority struct {
-	StreamID      uint32
-	PriorityParam PriorityParam
-}
-
 func (t *Transport) maxHeaderListSize() uint32 {
-	maxHeaderListSize, ok := t.Settings[SettingMaxHeaderListSize]
-
-	if !ok {
-		maxHeaderListSize = 0
-	}
-
-	if maxHeaderListSize == 0 {
+	if t.MaxHeaderListSize == 0 {
 		return 10 << 20
 	}
-	if maxHeaderListSize == 0xffffffff {
+	if t.MaxHeaderListSize == 0xffffffff {
 		return 0
 	}
-	return maxHeaderListSize
+	return t.MaxHeaderListSize
 }
 
 func (t *Transport) disableCompression() bool {
@@ -253,20 +236,12 @@ func configureTransports(t1 *http.Transport) (*Transport, error) {
 	//
 	// TODO: also add this to x/net/http2.Configure Transport, behind
 	// a +build go1.7 build tag:
-
-	maxHeaderListSize, ok := t2.Settings[SettingMaxHeaderListSize]
-
-	if !ok {
-		// we specified in our custom map to not include SettingMaxHeaderListSize
-		return t2, nil
-	}
-
-	if limit1 := t1.MaxResponseHeaderBytes; limit1 != 0 && maxHeaderListSize == 0 {
+	if limit1 := t1.MaxResponseHeaderBytes; limit1 != 0 && t2.MaxHeaderListSize == 0 {
 		const h2max = 1<<32 - 1
 		if limit1 >= h2max {
-			t2.Settings[SettingMaxHeaderListSize] = h2max
+			t2.MaxHeaderListSize = h2max
 		} else {
-			t2.Settings[SettingMaxHeaderListSize] = uint32(limit1)
+			t2.MaxHeaderListSize = uint32(limit1)
 		}
 	}
 	return t2, nil
@@ -338,15 +313,14 @@ type ClientConn struct {
 // clientStream is the state for a single HTTP/2 stream. One of these
 // is created for each Transport.RoundTrip call.
 type clientStream struct {
-	cc            *ClientConn
-	req           *http.Request
-	trace         *httptrace.ClientTrace // or nil
-	ID            uint32
-	resc          chan resAndError
-	requestedGzip bool
-	bufPipe       pipe   // buffered pipe with the flow-controlled response payload
-	startedWrite  bool   // started request body write; guarded by cc.mu
-	on100         func() // optional code to run if get a 100 continue response
+	cc           *ClientConn
+	req          *http.Request
+	trace        *httptrace.ClientTrace // or nil
+	ID           uint32
+	resc         chan resAndError
+	bufPipe      pipe   // buffered pipe with the flow-controlled response payload
+	startedWrite bool   // started request body write; guarded by cc.mu
+	on100        func() // optional code to run if get a 100 continue response
 
 	flow        flow  // guarded by cc.mu
 	inflow      flow  // guarded by cc.mu
@@ -741,15 +715,11 @@ func (t *Transport) newClientConn(c net.Conn, addr string, singleUse bool) (*Cli
 	cc.bw = bufio.NewWriter(stickyErrWriter{c, &cc.werr})
 	cc.br = bufio.NewReader(c)
 	cc.fr = NewFramer(cc.bw, cc.br)
-
-	customHeaderTableSize, ok := t.Settings[SettingHeaderTableSize]
-
-	if ok {
-		cc.fr.ReadMetaHeaders = hpack.NewDecoder(customHeaderTableSize, nil)
+	if t.HeaderTableSize != 0 {
+		cc.fr.ReadMetaHeaders = hpack.NewDecoder(t.HeaderTableSize, nil)
 	} else {
 		cc.fr.ReadMetaHeaders = hpack.NewDecoder(initialHeaderTableSize, nil)
 	}
-
 	cc.fr.MaxHeaderListSize = t.maxHeaderListSize()
 
 	// TODO: SetMaxDynamicTableSize, SetMaxDynamicTableSizeLimit on
@@ -771,49 +741,37 @@ func (t *Transport) newClientConn(c net.Conn, addr string, singleUse bool) (*Cli
 	if t.PushHandler != nil {
 		pushEnabled = 1
 	}
+	initialSettings = append(initialSettings, Setting{ID: SettingEnablePush, Val: pushEnabled})
 
-	//setMaxHeader := false
+	setMaxHeader := false
 	if t.Settings != nil {
-		// we need to iterate over the slice here not the map because of the random range over a map
-		for _, settingId := range t.SettingsOrder {
-			settingValue := t.Settings[settingId]
-
-			if settingId == SettingMaxHeaderListSize && settingValue != 0 {
-				// setMaxHeader = true
-				if settingValue != 0 {
-					initialSettings = append(initialSettings, Setting{ID: SettingMaxHeaderListSize, Val: settingValue})
-					continue
-				}
-
+		for _, setting := range t.Settings {
+			if setting.ID == SettingMaxHeaderListSize {
+				setMaxHeader = true
 			}
-			if settingId == SettingHeaderTableSize || settingId == SettingInitialWindowSize {
-				// return nil, errSettingsIncludeIllegalSettings
+			if setting.ID == SettingHeaderTableSize || setting.ID == SettingInitialWindowSize {
+				return nil, errSettingsIncludeIllegalSettings
 			}
-
-			initialSettings = append(initialSettings, Setting{ID: settingId, Val: settingValue})
+			initialSettings = append(initialSettings, setting)
 		}
-	} else {
-		// when we dont define a custom map on the transport we add Enable Push per default
-		initialSettings = append(initialSettings, Setting{ID: SettingEnablePush, Val: pushEnabled})
 	}
-
-	/*	if _, ok := t.Settings[SettingInitialWindowSize]; !ok {
-			initialSettings = append(initialSettings, Setting{ID: SettingInitialWindowSize, Val: transportDefaultStreamFlow})
-		}
-
-		if _, ok := t.Settings[SettingHeaderTableSize]; !ok {
-			initialSettings = append(initialSettings, Setting{ID: SettingHeaderTableSize, Val: initialHeaderTableSize})
-		}*/
+	if t.InitialWindowSize != 0 {
+		initialSettings = append(initialSettings, Setting{ID: SettingInitialWindowSize, Val: t.InitialWindowSize})
+	} else {
+		initialSettings = append(initialSettings, Setting{ID: SettingInitialWindowSize, Val: transportDefaultStreamFlow})
+	}
+	if t.HeaderTableSize != 0 {
+		initialSettings = append(initialSettings, Setting{ID: SettingHeaderTableSize, Val: t.HeaderTableSize})
+	} else {
+		initialSettings = append(initialSettings, Setting{ID: SettingHeaderTableSize, Val: initialHeaderTableSize})
+	}
+	if max := t.maxHeaderListSize(); max != 0 && !setMaxHeader {
+		initialSettings = append(initialSettings, Setting{ID: SettingMaxHeaderListSize, Val: max})
+	}
 
 	cc.bw.Write(clientPreface)
 	cc.fr.WriteSettings(initialSettings...)
-
-	for _, priority := range t.Priorities {
-		cc.fr.WritePriority(priority.StreamID, priority.PriorityParam)
-	}
-	//
-
-	cc.fr.WriteWindowUpdate(0, t.ConnectionFlow)
+	cc.fr.WriteWindowUpdate(0, transportDefaultConnFlow)
 	cc.inflow.add(transportDefaultConnFlow + initialWindowSize)
 	cc.bw.Flush()
 	if cc.werr != nil {
@@ -1152,7 +1110,6 @@ func (cc *ClientConn) roundTrip(req *http.Request) (res *http.Response, gotErrAf
 	if err := checkConnHeaders(req); err != nil {
 		return nil, false, err
 	}
-
 	if cc.idleTimer != nil {
 		cc.idleTimer.Stop()
 	}
@@ -1172,12 +1129,11 @@ func (cc *ClientConn) roundTrip(req *http.Request) (res *http.Response, gotErrAf
 	body := req.Body
 	contentLen := actualContentLength(req)
 	hasBody := contentLen != 0
-	requestedGzip := cc.requestGzip(req)
 
 	// we send: HEADERS{1}, CONTINUATION{0,} + DATA{0,} (DATA is
 	// sent by writeRequestBody below, along with any Trailers,
 	// again in form HEADERS{1}, CONTINUATION{0,})
-	hdrs, err := cc.encodeHeaders(req, requestedGzip, trailers, contentLen)
+	hdrs, err := cc.encodeHeaders(req, trailers, contentLen)
 	if err != nil {
 		cc.mu.Unlock()
 		return nil, false, err
@@ -1186,7 +1142,6 @@ func (cc *ClientConn) roundTrip(req *http.Request) (res *http.Response, gotErrAf
 	cs := cc.newStream()
 	cs.req = req
 	cs.trace = httptrace.ContextClientTrace(req.Context())
-	cs.requestedGzip = requestedGzip
 	bodyWriter := cc.t.getBodyWriterState(cs, body)
 	cs.on100 = bodyWriter.on100
 
@@ -1590,7 +1545,7 @@ func (cs *clientStream) awaitFlowControl(maxBytes int) (taken int32, err error) 
 }
 
 // requires cc.mu be held.
-func (cc *ClientConn) encodeHeaders(req *http.Request, addGzipHeader bool, trailers string, contentLength int64) ([]byte, error) {
+func (cc *ClientConn) encodeHeaders(req *http.Request, trailers string, contentLength int64) ([]byte, error) {
 	cc.hbuf.Reset()
 
 	host := req.Host
@@ -1646,12 +1601,6 @@ func (cc *ClientConn) encodeHeaders(req *http.Request, addGzipHeader bool, trail
 		// [RFC3986]).
 
 		pHeaderOrder, ok := req.Header[http.PHeaderOrderKey]
-
-		if !ok {
-			pHeaderOrder = cc.t.PseudoHeaderOrder
-			ok = true
-		}
-
 		m := req.Method
 		if m == "" {
 			m = http.MethodGet
@@ -1699,7 +1648,7 @@ func (cc *ClientConn) encodeHeaders(req *http.Request, addGzipHeader bool, trail
 		}
 
 		// Does not include accept-encoding header if its defined in req.Header
-		if _, ok := hdrs["accept-encoding"]; !ok && addGzipHeader {
+		if _, ok := hdrs["accept-encoding"]; !ok {
 			hdrs["accept-encoding"] = []string{"gzip, deflate, br"}
 		}
 
@@ -2247,8 +2196,6 @@ func (rl *clientConnReadLoop) handleResponse(cs *clientStream, f *MetaHeadersFra
 	cs.bytesRemain = res.ContentLength
 	res.Body = transportResponseBody{cs}
 	go cs.awaitRequestCancel(cs.req)
-
-	res.Body = http.DecompressBody(res)
 
 	return res, nil
 }
