@@ -1,6 +1,6 @@
 module github.com/0xPearson/fhttp
 
-go 1.18
+go 1.16
 
 require (
 	github.com/0xPearson/utls v0.0.0-20220524211518-096ebe429d4b
