@@ -15,7 +15,6 @@ import (
 	"github.com/0xPearson/fhttp/cookiejar"
 	"github.com/0xPearson/fhttp/httptest"
 	tls "github.com/0xPearson/utls"
-	gtls "crypto/tls"
 	"golang.org/x/net/publicsuffix"
 
 	http "github.com/0xPearson/fhttp"
@@ -81,25 +80,6 @@ func compareSettings(ID http2.SettingID, output uint32, expected uint32) error {
 
 // Round trip test, makes sure that the changes made doesn't break the library
 func TestRoundTrip(t *testing.T) {
-<<<<<<< HEAD
-	settings := map[http2.SettingID]uint32{
-		http2.SettingHeaderTableSize: 65536,
-		http2.SettingMaxConcurrentStreams: 1000,
-		http2.SettingInitialWindowSize: 6291456,
-		http2.SettingMaxFrameSize: 16384,
-		http2.SettingMaxHeaderListSize: 262144,
-	}
-	settingsOrder := []http2.SettingID{
-		http2.SettingHeaderTableSize,
-		http2.SettingMaxConcurrentStreams,
-		http2.SettingInitialWindowSize,
-		http2.SettingMaxFrameSize,
-		http2.SettingMaxHeaderListSize,
-	}
-	tr := http2.Transport{
-		Settings: settings,
-		SettingsOrder: settingsOrder,
-=======
 	settings := []http2.Setting{
 		{ID: http2.SettingHeaderTableSize, Val: 65536},
 		{ID: http2.SettingMaxConcurrentStreams, Val: 1000},
@@ -109,7 +89,6 @@ func TestRoundTrip(t *testing.T) {
 	}
 	tr := http2.Transport{
 		Settings: settings,
->>>>>>> parent of ae1b260 (w)
 	}
 	req, err := http.NewRequest("GET", "www.google.com", nil)
 	if err != nil {
@@ -204,7 +183,7 @@ func TestClient_Load(t *testing.T) {
 		Transport: &http.Transport{
 			ForceAttemptHTTP2: true,
 			Proxy:             http.ProxyURL(u),
-			TLSClientConfig: &gtls.Config{
+			TLSClientConfig: &tls.Config{
 				RootCAs: pool,
 			},
 		},
