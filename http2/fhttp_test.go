@@ -81,6 +81,7 @@ func compareSettings(ID http2.SettingID, output uint32, expected uint32) error {
 
 // Round trip test, makes sure that the changes made doesn't break the library
 func TestRoundTrip(t *testing.T) {
+<<<<<<< HEAD
 	settings := map[http2.SettingID]uint32{
 		http2.SettingHeaderTableSize: 65536,
 		http2.SettingMaxConcurrentStreams: 1000,
@@ -98,6 +99,17 @@ func TestRoundTrip(t *testing.T) {
 	tr := http2.Transport{
 		Settings: settings,
 		SettingsOrder: settingsOrder,
+=======
+	settings := []http2.Setting{
+		{ID: http2.SettingHeaderTableSize, Val: 65536},
+		{ID: http2.SettingMaxConcurrentStreams, Val: 1000},
+		{ID: http2.SettingInitialWindowSize, Val: 6291456},
+		{ID: http2.SettingMaxFrameSize, Val: 16384},
+		{ID: http2.SettingMaxHeaderListSize, Val: 262144},
+	}
+	tr := http2.Transport{
+		Settings: settings,
+>>>>>>> parent of ae1b260 (w)
 	}
 	req, err := http.NewRequest("GET", "www.google.com", nil)
 	if err != nil {

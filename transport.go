@@ -11,10 +11,7 @@ package http
 
 import (
 	"bufio"
-	"bytes"
-	"compress/flate"
-	"compress/gzip"
-	"compress/zlib"
+
 	"container/list"
 	"context"
 	"errors"
@@ -30,8 +27,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/andybalholm/brotli"
 
 	tls "github.com/0xPearson/utls"
 
@@ -125,6 +120,7 @@ type Transport struct {
 	//
 	// If Proxy is nil or returns a nil *URL, no proxy is used.
 	Proxy func(*Request) (*url.URL, error)
+
 	// DialContext specifies the dial function for creating unencrypted TCP connections.
 	// If DialContext is nil (and the deprecated Dial below is also nil),
 	// then the transport dials using package net.
@@ -279,9 +275,6 @@ type Transport struct {
 	nextProtoOnce      sync.Once
 	H2transport        h2Transport // non-nil if http2 wired up
 	tlsNextProtoWasNil bool        // whether TLSNextProto was nil when the Once fired
-
-	PseudoHeaderOrder []string
-	ConnectionFlow    uint32
 
 	// ForceAttemptHTTP2 controls whether HTTP/2 is enabled when a non-zero
 	// Dial, DialTLS, or DialContext func or TLSClientConfig is provided.
@@ -2187,14 +2180,6 @@ func (pc *persistConn) readLoop() {
 
 		resp.Body = body
 
-		if rc.addedGzip {
-			resp.Body = DecompressBody(resp)
-			resp.Header.Del("Content-Encoding")
-			resp.Header.Del("Content-Length")
-			resp.ContentLength = -1
-			resp.Uncompressed = true
-		}
-
 		select {
 		case rc.ch <- responseAndError{res: resp}:
 		case <-rc.callerGone:
@@ -2467,11 +2452,6 @@ type requestAndChan struct {
 	cancelKey cancelKey
 	ch        chan responseAndError // unbuffered; always send in select on callerGone
 
-	// whether the Transport (as opposed to the user client code)
-	// added the Accept-Encoding gzip header. If the Transport
-	// set it, only then do we transparently decode the gzip.
-	addedGzip bool
-
 	// Optional blocking chan for Expect: 100-continue (for send).
 	// If the request has an "Expect: 100-continue" header and
 	// the server responds 100 Continue, readLoop send a value
@@ -2545,27 +2525,6 @@ func (pc *persistConn) roundTrip(req *transportRequest) (resp *Response, err err
 	// uncompress the gzip stream if we were the layer that
 	// requested it.
 
-	requestedGzip := false
-	if !pc.t.DisableCompression &&
-		req.Header.Get("Accept-Encoding") == "" &&
-		req.Header.get("accept-encoding") == "" &&
-		req.Header.Get("Range") == "" &&
-		req.Method != "HEAD" {
-		// Request gzip, deflate, br if Accept-Encoding is
-		// not specified
-		//
-		// Note that we don't request this for HEAD requests,
-		// due to a bug in nginx:
-		//   https://trac.nginx.org/nginx/ticket/358
-		//   https://golang.org/issue/5522
-		//
-		// We don't request gzip if the request is for a range, since
-		// auto-decoding a portion of a gzipped document will just fail
-		// anyway. See https://golang.org/issue/8923
-		requestedGzip = true
-		req.extraHeaders().Set("Accept-Encoding", "gzip, deflate, br")
-	}
-
 	var continueCh chan struct{}
 	if req.ProtoAtLeast(1, 1) && req.Body != nil && req.expectsContinue() {
 		continueCh = make(chan struct{}, 1)
@@ -2600,7 +2559,6 @@ func (pc *persistConn) roundTrip(req *transportRequest) (resp *Response, err err
 		req:        req.Request,
 		cancelKey:  req.cancelKey,
 		ch:         resc,
-		addedGzip:  requestedGzip,
 		continueCh: continueCh,
 		callerGone: gone,
 	}
@@ -2864,6 +2822,7 @@ func (cl *connLRU) remove(pc *persistConn) {
 func (cl *connLRU) len() int {
 	return len(cl.m)
 }
+<<<<<<< HEAD
 
 func DecompressBody(res *Response) io.ReadCloser {
 	ce := res.Header.Get("Content-Encoding")
@@ -3019,3 +2978,5 @@ func prependBytesToReadCloser(b []byte, r io.ReadCloser) io.ReadCloser {
 
 	return io.NopCloser(w)
 }
+=======
+>>>>>>> parent of ae1b260 (w)
